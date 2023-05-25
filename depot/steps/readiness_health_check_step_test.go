@@ -8,30 +8,40 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
 	"github.com/tedsuo/ifrit"
+	fake_runner "github.com/tedsuo/ifrit/fake_runner_v2"
 )
 
 var _ = Describe("NewHealthCheckStep", func() {
 	var (
-		fakeStreamer *fake_log_streamer.FakeLogStreamer
-		step         ifrit.Runner
+		fakeStreamer   *fake_log_streamer.FakeLogStreamer
+		readinessCheck *fake_runner.TestRunner
+
+		step ifrit.Runner
 	)
 	BeforeEach(func() {
 		fakeStreamer = newFakeStreamer()
+		readinessCheck = fake_runner.NewTestRunner()
 	})
 
 	JustBeforeEach(func() {
-		step = steps.NewReadinessHealthCheckStep(fakeStreamer)
+		step = steps.NewReadinessHealthCheckStep(readinessCheck, fakeStreamer)
 		_ = ifrit.Background(step)
 	})
 
 	AfterEach(func() {
+		// Eventually(readinessCheck.RunCallCount).Should(Equal(1))
+		readinessCheck.EnsureExit()
 	})
 
 	Describe("Run", func() {
-		FIt("emits a message to the applications log stream", func() {
+		It("emits a message to the applications log stream", func() {
 			Eventually(fakeStreamer.Stdout().(*gbytes.Buffer)).Should(
 				gbytes.Say("Starting readiness health monitoring of container\n"),
 			)
+		})
+
+		FIt("Runs the readiness check", func() {
+			Eventually(readinessCheck.RunCallCount).Should(Equal(1))
 		})
 
 		Context("when optional check definition properties are missing", func() {

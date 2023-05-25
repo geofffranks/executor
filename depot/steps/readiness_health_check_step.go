@@ -15,7 +15,7 @@ const (
 )
 
 type readinessHealthCheckStep struct {
-	// startupCheck  ifrit.Runner
+	readinessCheck ifrit.Runner
 	// livenessCheck ifrit.Runner
 	// logger              lager.Logger
 	// clock               clock.Clock
@@ -25,14 +25,18 @@ type readinessHealthCheckStep struct {
 }
 
 func NewReadinessHealthCheckStep(
+	readinessCheck ifrit.Runner,
 	logStreamer log_streamer.LogStreamer,
 ) ifrit.Runner {
 	return &readinessHealthCheckStep{
-		logStreamer: logStreamer,
+		readinessCheck: readinessCheck,
+		logStreamer:    logStreamer,
 	}
 }
 
 func (step *readinessHealthCheckStep) Run(signals <-chan os.Signal, ready chan<- struct{}) error {
 	fmt.Fprint(step.logStreamer.Stdout(), "Starting readiness health monitoring of container\n")
+
+	_ = ifrit.Background(step.readinessCheck)
 	return nil
 }
