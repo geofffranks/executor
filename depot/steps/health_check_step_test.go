@@ -18,14 +18,12 @@ import (
 	fake_runner "github.com/tedsuo/ifrit/fake_runner_v2"
 )
 
-var _ = FDescribe("NewHealthCheckStep", func() {
+var _ = Describe("NewHealthCheckStep", func() {
 	var (
-		startupCheck            *fake_runner.TestRunner
-		livenessCheck           *fake_runner.TestRunner
-		readinessCheck          *fake_runner.TestRunner
-		clock                   *fakeclock.FakeClock
-		fakeStreamer            *fake_log_streamer.FakeLogStreamer
-		fakeHealthCheckStreamer *fake_log_streamer.FakeLogStreamer
+		startupCheck, livenessCheck *fake_runner.TestRunner
+		clock                       *fakeclock.FakeClock
+		fakeStreamer                *fake_log_streamer.FakeLogStreamer
+		fakeHealthCheckStreamer     *fake_log_streamer.FakeLogStreamer
 
 		startTimeout time.Duration
 
@@ -39,7 +37,6 @@ var _ = FDescribe("NewHealthCheckStep", func() {
 
 		startupCheck = fake_runner.NewTestRunner()
 		livenessCheck = fake_runner.NewTestRunner()
-		readinessCheck = nil
 
 		clock = fakeclock.NewFakeClock(time.Now())
 
@@ -55,7 +52,6 @@ var _ = FDescribe("NewHealthCheckStep", func() {
 		step = steps.NewHealthCheckStep(
 			startupCheck,
 			livenessCheck,
-			readinessCheck,
 			logger,
 			clock,
 			fakeStreamer,
@@ -73,11 +69,6 @@ var _ = FDescribe("NewHealthCheckStep", func() {
 			Eventually(livenessCheck.RunCallCount).Should(Equal(1))
 			livenessCheck.TriggerExit(errors.New("booom!")) // liveness check must exit with non-nil error
 		}
-		// if readinessCheck != nil {
-		// 	Eventually(readinessCheck.RunCallCount).Should(Equal(1))
-		// 	livenessCheck.TriggerExit(errors.New("baang!")) // readiness check must exit with non-nil error ? Maybe not
-		// 	// not sure what to do here, if it's the first readiness check with -until-ready then it needs to exit 0, but if it's the -readiness-interval then it needs a non-zero exit code
-		// }
 	})
 
 	Describe("Run", func() {
@@ -87,11 +78,10 @@ var _ = FDescribe("NewHealthCheckStep", func() {
 			)
 		})
 
-		Context("when the startup check fails", func() {
+		Context("when the start upcheck fails", func() {
 			JustBeforeEach(func() {
 				startupCheck.TriggerExit(errors.New("booom!"))
 				livenessCheck = nil
-				// readinessCheck = nil
 			})
 
 			It("completes with failure", func() {
@@ -145,7 +135,7 @@ var _ = FDescribe("NewHealthCheckStep", func() {
 
 				JustBeforeEach(func() {
 					livenessCheck.TriggerExit(disaster)
-					livenessCheck = nil // I don't understand why this is necessary at all
+					livenessCheck = nil
 				})
 
 				It("logs the step", func() {
@@ -201,31 +191,11 @@ var _ = FDescribe("NewHealthCheckStep", func() {
 
 					process.Signal(os.Interrupt)
 					Eventually(livenessCheck.WaitForCall()).Should(Receive(Equal(os.Interrupt)))
-					livenessCheck.TriggerExit(errors.New("happy magic value")) // why are we even doing this!!!!
-					// livenessCheck = nil
+					livenessCheck.TriggerExit(nil)
+					livenessCheck = nil
 					Eventually(process.Wait()).Should(Receive(Equal(new(steps.CancelledError))))
 				})
 			})
-
-			// Context("and while doing readiness check", func() {
-			// 	BeforeEach(func() {
-			// 		// livenessCheck = nil
-			// 		// readinessCheck = fake_runner.NewTestRunner()
-			// 	})
-
-			// 	PIt("cancels the in-flight check", func() {
-			// 		startupCheck.TriggerExit(nil)
-
-			// 		Eventually(livenessCheck.RunCallCount).Should(Equal(1))
-			// 		Eventually(readinessCheck.RunCallCount).Should(Equal(1))
-
-			// 		process.Signal(os.Interrupt)
-			// 		Eventually(readinessCheck.WaitForCall()).Should(Receive(Equal(os.Interrupt)))
-			// 		readinessCheck.TriggerExit(nil)
-			// 		readinessCheck = nil //todo do we need this?
-			// 		Eventually(process.Wait()).Should(Receive(Equal(new(steps.CancelledError))))
-			// 	})
-			// })
 		})
 	})
 })

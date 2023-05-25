@@ -31,7 +31,5 @@ func NewMonitor(
 	// add the proxy startup checks (if any)
 	startupCheck = NewParallel(append(proxyStartupChecks, startupCheck))
 
-	// I don't think we need to send any readiness checks for monitor actions because it's only defined in the CheckDefinition key (not monitor)
-	// Maybe this will fail eventually lol, tries to start a nil process
-	return NewHealthCheckStep(startupCheck, liveness, nil, logger, clock, logStreamer, logStreamer, startTimeout)
+	return NewHealthCheckStep(startupCheck, liveness, logger, clock, logStreamer, logStreamer, startTimeout)
 }

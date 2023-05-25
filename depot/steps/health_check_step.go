@@ -18,9 +18,8 @@ const (
 )
 
 type healthCheckStep struct {
-	startupCheck   ifrit.Runner
-	livenessCheck  ifrit.Runner
-	readinessCheck ifrit.Runner
+	startupCheck  ifrit.Runner
+	livenessCheck ifrit.Runner
 
 	logger              lager.Logger
 	clock               clock.Clock
@@ -33,7 +32,6 @@ type healthCheckStep struct {
 func NewHealthCheckStep(
 	startupCheck ifrit.Runner,
 	livenessCheck ifrit.Runner,
-	readinessCheck ifrit.Runner,
 	logger lager.Logger,
 	clock clock.Clock,
 	logStreamer log_streamer.LogStreamer,
@@ -45,7 +43,6 @@ func NewHealthCheckStep(
 	return &healthCheckStep{
 		startupCheck:        startupCheck,
 		livenessCheck:       livenessCheck,
-		readinessCheck:      readinessCheck,
 		logger:              logger,
 		clock:               clock,
 		logStreamer:         logStreamer,
@@ -80,56 +77,23 @@ func (step *healthCheckStep) Run(signals <-chan os.Signal, ready chan<- struct{}
 		return new(CancelledError)
 	}
 
-	step.logger.Info("transitioned-to-healthy") // is this misleading? maybe "container-tranisitioned-to-healthy", something about the startup check passing but not all of the healthchecks
+	step.logger.Info("transitioned-to-healthy")
 	//TODO: make this use metron agent directly, don't use log streamer, shouldn't be rate limited.
 	fmt.Fprint(step.logStreamer.Stdout(), "Container became healthy\n")
 	close(ready)
 
-	errPropagationCh := make(chan error) // need to close this eventually
-	var livenessProcess ifrit.Process
-	if step.livenessCheck != nil {
-		livenessProcess = ifrit.Background(step.livenessCheck)
-		go func(errPropagationCh chan error, step *healthCheckStep) {
-			select {
-			case err := <-livenessProcess.Wait():
-				step.logger.Info("transitioned-to-unhealthy")
-				//TODO: make this use metron agent directly, don't use log streamer, shouldn't be rate limited.
-				fmt.Printf("step: %+v\n", step)
-				fmt.Printf("err: %+v\n", err)
-				fmt.Fprintf(step.healthCheckStreamer.Stderr(), "%s\n", err.Error())
-				fmt.Fprint(step.logStreamer.Stderr(), "Container became unhealthy\n")
-				errPropagationCh <- NewEmittableError(err, healthcheckNowUnhealthy, err.Error())
-				// break // dunno if this is necessary at all
-			}
-		}(errPropagationCh, step)
-	}
-	// readinessProcess := ifrit.Background(step.readinessCheck)
+	livenessProcess := ifrit.Background(step.livenessCheck)
 
 	select {
-	case propogatedErr := <-errPropagationCh:
-		return propogatedErr
+	case err := <-livenessProcess.Wait():
+		step.logger.Info("transitioned-to-unhealthy")
+		//TODO: make this use metron agent directly, don't use log streamer, shouldn't be rate limited.
+		fmt.Fprintf(step.healthCheckStreamer.Stderr(), "%s\n", err.Error())
+		fmt.Fprint(step.logStreamer.Stderr(), "Container became unhealthy\n")
+		return NewEmittableError(err, healthcheckNowUnhealthy, err.Error())
 	case s := <-signals:
-		// var wg sync.WaitGroup
-		// wg.Add(1)
-		// readinessProcess.Signal(s)
-		// livenessProcess.Signal(s)
-
-		// go func() {
-		// 	defer wg.Done()
-		// 	<-livenessProcess.Wait()
-		// }()
-
-		// go func() {
-		// 	defer wg.Done()
-		// 	<-readinessProcess.Wait()
-		// }()
-
-		// wg.Wait()
-
-		if step.livenessCheck != nil {
-			livenessProcess.Signal(s)
-			<-livenessProcess.Wait()
-		}
+		livenessProcess.Signal(s)
+		<-livenessProcess.Wait()
 		return new(CancelledError)
 	}
 }
