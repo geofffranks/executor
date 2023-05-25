@@ -516,12 +516,15 @@ var _ = Describe("Transformer", func() {
 				startupCh                     chan int
 				livenessProcess               *gardenfakes.FakeProcess
 				livenessCh                    chan int
+				readinessProcess              *gardenfakes.FakeProcess
+				readinessCh                   chan int
 				actionProcess                 *gardenfakes.FakeProcess
 				actionCh                      chan int
 				monitorProcess                *gardenfakes.FakeProcess
 				monitorCh                     chan int
 				startupIO                     chan garden.ProcessIO
 				livenessIO                    chan garden.ProcessIO
+				readinessIO                   chan garden.ProcessIO
 				processLock                   sync.Mutex
 				specs                         chan garden.ProcessSpec
 				declarativeHealthcheckSrcPath string = filepath.Join(string(os.PathSeparator), "dir", "healthcheck")
@@ -534,10 +537,12 @@ var _ = Describe("Transformer", func() {
 
 				startupIO = make(chan garden.ProcessIO, 1)
 				livenessIO = make(chan garden.ProcessIO, 1)
+				readinessIO = make(chan garden.ProcessIO, 1)
 				specs = make(chan garden.ProcessSpec, 10)
 				// make the race detector happy
 				startupIOCh := startupIO
 				livenessIOCh := livenessIO
+				readinessIOCh := readinessIO
 				specsCh := specs
 
 				startupCh = make(chan int)
@@ -545,6 +550,9 @@ var _ = Describe("Transformer", func() {
 
 				livenessCh = make(chan int, 1)
 				livenessProcess = makeProcess(livenessCh)
+
+				readinessCh = make(chan int, 1)
+				readinessProcess = makeProcess(readinessCh)
 
 				actionCh = make(chan int, 1)
 				actionProcess = makeProcess(actionCh)
@@ -574,6 +582,9 @@ var _ = Describe("Transformer", func() {
 						case 2:
 							livenessIOCh <- io
 							return livenessProcess, nil
+						case 3:
+							readinessIOCh <- io
+							return readinessProcess, nil
 						}
 					case "/monitor/path":
 						return monitorProcess, nil
@@ -632,6 +643,7 @@ var _ = Describe("Transformer", func() {
 					})
 
 					It("uses the monitor action", func() {
+						// Amelia: confused by this test. I thought we DIDNT use monitor...??
 						Eventually(gardenContainer.RunCallCount, 5*time.Second).Should(Equal(2))
 						paths := []string{}
 						for i := 0; i < gardenContainer.RunCallCount(); i++ {
@@ -1033,7 +1045,6 @@ var _ = Describe("Transformer", func() {
 									"-liveness-interval=1s",
 								}))
 							})
-
 						})
 
 						Context("when the liveness check exits", func() {
@@ -1071,6 +1082,74 @@ var _ = Describe("Transformer", func() {
 							It("returns the liveness check output in the error", func() {
 								Eventually(process.Wait()).Should(Receive(MatchError(ContainSubstring("Instance became unhealthy: liveness check failed"))))
 							})
+						})
+					})
+				})
+
+				Context("and the readiness_check definition exists", func() {
+					BeforeEach(func() {
+						container.CheckDefinition = &models.CheckDefinition{
+							Checks: []*models.Check{ // do we really need this?
+								&models.Check{
+									TcpCheck: &models.TCPCheck{
+										Port: 5432,
+										// ConnectTimeoutMs: 100,
+										IntervalMs: 44,
+									},
+								},
+							},
+							ReadinessChecks: []*models.Check{
+								&models.Check{
+									TcpCheck: &models.TCPCheck{
+										Port: 5432,
+										// ConnectTimeoutMs: 100,
+										IntervalMs: 44,
+									},
+								},
+							},
+						}
+					})
+
+					XIt("uses the startup check definition", func() { // do we need this at all?
+						Eventually(gardenContainer.RunCallCount).Should(Equal(2))
+						ids := []string{}
+						paths := []string{}
+						args := [][]string{}
+						for i := 0; i < gardenContainer.RunCallCount(); i++ {
+							spec, _ := gardenContainer.RunArgsForCall(i)
+							ids = append(ids, spec.ID)
+							paths = append(paths, spec.Path)
+							args = append(args, spec.Args)
+						}
+
+						Expect(ids).To(ContainElement(fmt.Sprintf("%s-%s", gardenContainer.Handle(), "startup-healthcheck-0")))
+					})
+
+					Context("when the startup check passes", func() {
+						JustBeforeEach(func() {
+							startupCh <- 0
+						})
+
+						FIt("uses the readiness_check check definition", func() {
+							Eventually(gardenContainer.RunCallCount).Should(Equal(3)) // should be 4
+							ids := []string{}
+							paths := []string{}
+							args := [][]string{}
+							for i := 0; i < gardenContainer.RunCallCount(); i++ {
+								spec, _ := gardenContainer.RunArgsForCall(i)
+								ids = append(ids, spec.ID)
+								paths = append(paths, spec.Path)
+								args = append(args, spec.Args)
+							}
+
+							Expect(ids).To(ContainElement(fmt.Sprintf("%s-%s", gardenContainer.Handle(), "readiness-healthcheck-0")))
+							Expect(paths).To(ContainElement(filepath.Join(transformer.HealthCheckDstPath, "healthcheck")))
+							Expect(args).To(ContainElement([]string{
+								"-port=5432",
+								"-timeout=100ms",
+								"-until-ready=123ms", // think about value
+							}))
+
 						})
 					})
 				})

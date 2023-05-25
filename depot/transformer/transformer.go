@@ -462,6 +462,18 @@ func (t *transformer) StepsRunner(
 		}
 	}
 
+	// Before - only called transformCheckDefinition when livliness check def
+
+	// Now
+	// test 1 - liveness exists, readiness dne
+	//          do the same thing that happens in the before times
+
+	// test 2 - liveness dne, readiness exists
+	//          no monitor or liveness check,  make check for readiness
+	// test 3 - liveness exists, readiness exists
+	//          do the same thing as before, but also add readiness checks
+	// test 4 - liveness dne, readiness dne
+	//          do the same things as before, also dont add readiness
 	if container.CheckDefinition != nil && t.useDeclarativeHealthCheck {
 		monitor = t.transformCheckDefinition(logger,
 			&container,
@@ -472,6 +484,10 @@ func (t *transformer) StepsRunner(
 		)
 		substeps = append(substeps, monitor)
 	} else if container.Monitor != nil {
+		// According to this document comment we don't even care about the monitor section?
+		// From: https://docs.google.com/document/d/1AS8GzKg3pdAv56nySQTgF4NaqqzrBwmztkL2_8ahKa4/edit#heading=h.v5hjwfuysd09
+		// "If check_definition is not set Diego is using the monitor section. But CC will either set both of them or neither. Since Diego prefers check_definition it will never use the monitor section."
+
 		overrideSuppressLogOutput(container.Monitor)
 		monitor = steps.NewMonitor(
 			func() ifrit.Runner {
@@ -627,6 +643,7 @@ func (t *transformer) transformCheckDefinition(
 
 	startupLogger := logger.Session("startup-check")
 	livenessLogger := logger.Session("liveness-check")
+	// readinessLogger := logger.Session("readiness-check")
 
 	for index, check := range container.CheckDefinition.Checks {
 
@@ -721,12 +738,80 @@ func (t *transformer) transformCheckDefinition(
 		}
 	}
 
+	for _, check := range container.CheckDefinition.ReadinessChecks {
+
+		// readinessSidecarName := fmt.Sprintf("%s-readiness-healthcheck-%d", gardenContainer.Handle(), index)
+
+		if err := check.Validate(); err != nil {
+			logger.Error("invalid-check", err, lager.Data{"check": check})
+		} else if check.HttpCheck != nil {
+			// timeout := int(check.HttpCheck.RequestTimeoutMs)
+			// if timeout == 0 {
+			// 	timeout = DefaultDeclarativeHealthcheckRequestTimeout
+			// }
+			// path := check.HttpCheck.Path
+			// if path == "" {
+			// 	path = "/"
+			// }
+			// // we can use the fact that time.Duration is an int64 to simplify creating the proper time.Duration object from desired number of Milliseconds
+			// interval := time.Duration(check.HttpCheck.IntervalMs) * time.Millisecond
+			// if interval == 0 {
+			// 	interval = t.healthyMonitoringInterval
+			// }
+
+			// readinessChecks = append(readinessChecks, t.createCheck(
+			// 	container,
+			// 	gardenContainer,
+			// 	bindMounts,
+			// 	path,
+			// 	readinessSidecarName,
+			// 	int(check.HttpCheck.Port),
+			// 	timeout,
+			// 	true,
+			// 	false,
+			// 	interval,
+			// 	readinessLogger,
+			// 	"",
+			// ))
+			break
+		} else if check.TcpCheck != nil {
+			timeout := int(check.TcpCheck.ConnectTimeoutMs)
+			if timeout == 0 {
+				timeout = DefaultDeclarativeHealthcheckRequestTimeout
+			}
+			// we can use the fact that time.Duration is an int64 to simplify creating the proper time.Duration object from desired number of Milliseconds
+			interval := time.Duration(check.TcpCheck.IntervalMs) * time.Millisecond
+			if interval == 0 {
+				interval = t.healthyMonitoringInterval
+			}
+
+			// readinessChecks = append(readinessChecks, t.createCheck(
+			// 	container,
+			// 	gardenContainer,
+			// 	bindMounts,
+			// 	"",
+			// 	readinessSidecarName,
+			// 	int(check.TcpCheck.Port),
+			// 	timeout,
+			// 	false,
+			// 	false,
+			// 	interval,
+			// 	readinessLogger,
+			// 	"",
+			// ))
+		}
+	}
+
 	startupCheck := steps.NewParallel(append(proxyStartupChecks, startupChecks...))
+	// add a check if livenessChecks > 0 ? Otherwise send nil?
 	livenessCheck := steps.NewCodependent(livenessChecks, false, false)
+	// add a check if readinessChecks > 0 ? Otherwise send nil?
+	// readinessCheck := steps.NewCodependent(readinessChecks, false, false) // No idea if this is correct yet
 
 	return steps.NewHealthCheckStep(
 		startupCheck,
 		livenessCheck,
+		// readinessCheck,
 		logger,
 		t.clock,
 		logstreamer,
