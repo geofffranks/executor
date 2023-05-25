@@ -15,8 +15,8 @@ const (
 )
 
 type readinessHealthCheckStep struct {
-	readinessCheck ifrit.Runner
-	// livenessCheck ifrit.Runner
+	untilReadyCheck ifrit.Runner
+	// readinessCheck ifrit.Runner
 	// logger              lager.Logger
 	// clock               clock.Clock
 	logStreamer log_streamer.LogStreamer
@@ -25,18 +25,32 @@ type readinessHealthCheckStep struct {
 }
 
 func NewReadinessHealthCheckStep(
-	readinessCheck ifrit.Runner,
+	untilReadyCheck ifrit.Runner,
 	logStreamer log_streamer.LogStreamer,
 ) ifrit.Runner {
 	return &readinessHealthCheckStep{
-		readinessCheck: readinessCheck,
-		logStreamer:    logStreamer,
+		untilReadyCheck: untilReadyCheck,
+		logStreamer:     logStreamer,
 	}
 }
 
 func (step *readinessHealthCheckStep) Run(signals <-chan os.Signal, ready chan<- struct{}) error {
 	fmt.Fprint(step.logStreamer.Stdout(), "Starting readiness health monitoring of container\n")
 
-	_ = ifrit.Background(step.readinessCheck)
+	untilReadyProcess := ifrit.Background(step.untilReadyCheck)
+
+	select {
+	case <-untilReadyProcess.Wait():
+		fmt.Fprint(step.logStreamer.Stdout(), "App is ready!\n")
+	case s := <-signals:
+		untilReadyProcess.Signal(s)
+		<-untilReadyProcess.Wait()
+		return new(CancelledError)
+	}
+
+	close(ready)
+
+	for {
+	}
 	return nil
 }
